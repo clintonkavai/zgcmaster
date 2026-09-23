@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: Rust and publication checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Check public file set
+        run: python3 scripts/check_public_tree.py
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.96.0 --profile minimal --component rustfmt --component clippy
+      - name: Format
+        run: cargo +1.96.0 fmt --all -- --check
+      - name: Clippy
+        run: cargo +1.96.0 clippy --locked --all-targets -- -D warnings
+      - name: Tests including scale boundaries
+        run: cargo +1.96.0 test --release --locked -- --include-ignored
+      - name: Shell and Python syntax
+        run: |
+          bash -n docker/start-fixture.sh docker/capture.sh
+          python3 -m compileall -q scripts
+
+  fixture:
+    name: Java 21 fixture (${{ matrix.profile }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [nongen, generational]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Build, capture and verify synthetic fixture
+        env:
+          ZGCM_CI_PROFILE: ${{ matrix.profile }}
+        run: python3 scripts/ci_fixture.py --profile "$ZGCM_CI_PROFILE"
+      - name: Upload synthetic evidence reports only
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: synthetic-evidence-${{ matrix.profile }}
+          path: artifacts/*.evidence.json
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Stop this job's fixture
+        if: always()
+        run: docker compose down --remove-orphans

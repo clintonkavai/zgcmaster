@@ -1,0 +1,21 @@
+[package]
+name = "zgcmaster"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Evidence-preserving CLI for raw Java 21 ZGC backing-file captures"
+license = "Apache-2.0"
+repository = "https://github.com/clintonkavai/zgcmaster"
+readme = "README.md"
+keywords = ["java", "zgc", "heap", "forensics", "cli"]
+categories = ["command-line-utilities", "development-tools::debugging"]
+include = ["src/**", "tests/**", "Cargo.toml", "Cargo.lock", "README.md", "LICENSE"]
+
+[dependencies]
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.145"
+sha2 = "=0.10.9"
+
+[profile.release]
+lto = "thin"
+strip = true

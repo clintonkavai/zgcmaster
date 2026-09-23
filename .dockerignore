@@ -1,0 +1,17 @@
+captures
+artifacts
+target
+fixture/target
+.git
+__pycache__
+**/__pycache__
+.env*
+*.raw
+*.bin
+*.hprof
+*.jsonl
+*.pem
+*.key
+docs/private
+STRING-VALIDATION.md
+PERIODICITY-VALIDATION.md

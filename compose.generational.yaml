@@ -1,0 +1,4 @@
+services:
+  fixture:
+    environment:
+      ZGCM_FIXTURE_PROFILE: gen-compressedklass

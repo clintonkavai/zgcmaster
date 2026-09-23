@@ -1,0 +1,27 @@
+name: Bug report
+description: Report a failure using synthetic data only
+body:
+  - type: markdown
+    attributes:
+      value: "Do not attach real heaps, decoded strings, credentials or private reports. Use SECURITY.md for vulnerabilities."
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Synthetic reproduction
+      description: Command, expected behavior, actual behavior, and minimal generated input.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment and assumptions
+      description: Commit, OS/architecture, Docker/native, profile, GC mode, class-pointer mode, and reference hypothesis. Do not paste private paths or environment dumps.
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Data handling
+      options:
+        - label: This report contains no real capture, recovered sensitive text, secrets, or customer identifiers.
+          required: true

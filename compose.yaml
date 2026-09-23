@@ -1,0 +1,27 @@
+name: zgcmaster
+services:
+  fixture:
+    build:
+      context: .
+      dockerfile: docker/fixture.Dockerfile
+    init: true
+    ports:
+      - "127.0.0.1:${ZGCM_PORT:-18765}:8080"
+    mem_limit: 768m
+    cpus: 2
+    volumes:
+      - ./captures:/captures
+    environment:
+      FIXTURE_RECORDS: "256"
+    stop_grace_period: 15s
+  cli:
+    build:
+      context: .
+      dockerfile: docker/cli.Dockerfile
+    profiles: [tools]
+    network_mode: none
+    mem_limit: 512m
+    cpus: 2
+    volumes:
+      - ./captures:/captures:ro
+      - ./artifacts:/artifacts

@@ -1,0 +1,9 @@
+# Supply the actual Instana instrumentation agent, not the public no-op startup JAR.
+services:
+  fixture:
+    volumes:
+      - ${INSTANA_AGENT_JAR:?Set the absolute path to the Instana agent JAR}:/opt/instana/agent.jar:ro
+    environment:
+      INSTANA_AGENT_SHA256: ${INSTANA_AGENT_SHA256:?Set the agent JAR SHA-256}
+      INSTANA_AGENT_HOST: ${INSTANA_AGENT_HOST:-host.docker.internal}
+      INSTANA_AGENT_PORT: ${INSTANA_AGENT_PORT:-42699}
