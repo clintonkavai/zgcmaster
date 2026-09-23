@@ -8,7 +8,13 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 pub mod analysis;
+pub mod census;
+pub mod corpus;
+#[cfg(test)]
+mod corpus_tests;
+pub mod dictionaries;
 pub mod discovery;
+pub mod patterns;
 pub mod profiles;
 pub mod raw_strings;
 #[cfg(test)]

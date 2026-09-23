@@ -1,14 +1,14 @@
 use super::*;
 use std::sync::atomic::{AtomicU64, Ordering};
 static NEXT: AtomicU64 = AtomicU64::new(0);
-fn temp() -> std::path::PathBuf {
+pub(super) fn temp() -> std::path::PathBuf {
     std::env::temp_dir().join(format!(
         "zgcmaster-regression-{}-{}",
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ))
 }
-fn bound(profile: &str, bindings: &[(&str, &str)]) -> Layout {
+pub(super) fn bound(profile: &str, bindings: &[(&str, &str)]) -> Layout {
     profiles::boot(
         profile,
         &bindings
@@ -19,7 +19,7 @@ fn bound(profile: &str, bindings: &[(&str, &str)]) -> Layout {
     .unwrap()
 }
 
-fn string_bindings(profile: &str, model: &str, max: u64) -> raw_strings::Bindings {
+pub(super) fn string_bindings(profile: &str, model: &str, max: u64) -> raw_strings::Bindings {
     let narrow = profile.contains("-compressedklass-");
     raw_strings::Bindings::new(
         profile,
@@ -39,7 +39,7 @@ fn string_bindings(profile: &str, model: &str, max: u64) -> raw_strings::Binding
     .unwrap()
 }
 
-fn string_pair(
+pub(super) fn string_pair(
     data: &mut [u8],
     offset: usize,
     array: usize,
@@ -274,7 +274,13 @@ fn string_commands_reject_bad_bindings_formats_and_propagate_writer_errors() {
     assert!(raw_strings::strings(&path, &bindings, 0, false, &mut Failing).is_err());
     std::fs::remove_file(path).unwrap();
 }
-fn header(data: &mut [u8], offset: usize, klass: u64, narrow: bool, length: Option<u32>) {
+pub(super) fn header(
+    data: &mut [u8],
+    offset: usize,
+    klass: u64,
+    narrow: bool,
+    length: Option<u32>,
+) {
     data[offset..offset + 8].copy_from_slice(&1u64.to_le_bytes());
     let k = klass.to_le_bytes();
     let kw = if narrow { 4 } else { 8 };

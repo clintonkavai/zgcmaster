@@ -12,6 +12,9 @@ It does not require or generate an HPROF file.
 For metadata-free captures, `strings` can stream text under explicitly supplied
 boot-class bindings and a reference-offset hypothesis. `verify-bindings` measures
 cached-hash agreement on a reproducible sample without exposing text.
+`census` classifies indexed byte-array content, `diff-captures` compares decoded
+String sets and content counts, and `dictionaries` streams Node-compatible
+String key/value pairs. User regex packs can label recovered text and changes.
 
 This is an experimental reader with a reproducible fixture, not a general Java
 heap analyzer. A bare FD copy does not contain all the information needed for
@@ -42,10 +45,12 @@ For a native CLI, use an existing Rust 1.88+ toolchain: `cargo install --path . 
 The tested/build-image toolchain is Rust 1.96.0. No host Java is required.
 
 Commands include raw/typed scanning, `summary`, `list`, `show`, `dump`, `strings`,
-`verify-bindings`, array `extract`/`carve`, and structural `diff`. Typed operations
+`verify-bindings`, `census`, `diff-captures`, `dictionaries`, array `extract`/`carve`,
+and structural `diff`. Typed operations
 require a matching layout or explicit class bindings; a raw scan does not invent
 class names. For a known-data example, run the Docker fixture below.
 
+[Corpus commands and regex packs](docs/CORPUS.md) ·
 [Contributing](CONTRIBUTING.md) · [Validation](VALIDATION.md) ·
 [Correctness boundaries](IMPLEMENTATION-NOTES.md) · [Changelog](CHANGELOG.md)
 

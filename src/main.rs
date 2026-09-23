@@ -26,6 +26,11 @@ Commands:
   boot-profile PROFILE                   Print UNBOUND boot layout templates
   strings HEAP.raw [STRING_OPTIONS]       Stream hypothesis-resolved Strings (JSONL)
   verify-bindings HEAP.raw [STRING_OPTIONS]  Sample String/byte[] cached hashes (JSON)
+  census SOURCE INDEX.json [CENSUS_OPTIONS]  Classify every indexed byte[] candidate
+  dictionaries HEAP.raw [STRING_OPTIONS] --node-klass ID [--node-klass ...]
+                                         Stream Node-prefix String key/value pairs
+  diff-captures BEFORE BEFORE_INDEX AFTER AFTER_INDEX [DIFF_OPTIONS]
+                                         String-set changes plus byte[] census deltas
 
 Scan options:
   --only CLASS,CLASS      Exact JVM class names; repeatable, e.g. '[B,[I,[J'
@@ -49,10 +54,23 @@ String commands (raw files; no index or maps needed):
   --output NEW_FILE       Optional private output file; default stdout
   --max-bytes N           Payload bound (default 65536, maximum 1048576)
   --min-len N             strings only: minimum UTF-16 units (default 1)
-  --require-hash          strings only: skip candidates without cached hashes
+  --require-hash          strings/dictionaries: require cached String hashes (both dictionary sides)
   --samples N --seed N    verify-bindings only (defaults 1000, 0; max 10000)
                          Uniform header sampling before reference resolution;
                          reports failures and conditional hash-match rates, no text
+  --node-klass ID         dictionaries only: repeat for compatible Node families
+  --regex-pack FILE       strings/dictionaries/diff-captures: versioned user regex pack
+                         Matches are labeled; output is not filtered by the pack
+
+Census/diff options:
+  --output NEW_FILE       Private output file (default stdout); diff emits JSONL
+  --max-bytes N           Full-payload bound (default/max 1048576); excess gets magic hints only
+  --region-bytes N        UTF-8 anomaly regions (default 67108864; 16 MiB..1 GiB)
+  --reference-hypothesis MODEL  Required for diff-captures; taken with each index's bindings
+  --min-len N --require-hash    Diff String filters (default min-len 1, allow unhashed)
+  --max-unique N          Diff bound per capture (default 250000; max 2000000)
+  --max-text-bytes N      Diff stored UTF-8 bound per capture (default 67108864; max 536870912)
+                         Exceeding corpus bounds refuses the diff, never invents gone strings
 
 Offsets accept decimal or 0x-prefixed hex. Files are never overwritten.
 SOURCE is a verified bundle directory or a raw file with an identity-mode index.
@@ -162,11 +180,12 @@ fn scan_command(command: &str, input: &str, output: &str, args: &[String]) -> Re
 fn string_command(command: &str, input: &str, args: &[String]) -> Result<()> {
     let mut options = std::collections::BTreeMap::new();
     let mut bindings = std::collections::BTreeMap::new();
+    let mut nodes = Vec::new();
     let mut i = 0;
     while i < args.len() {
         let flag = args[i].as_str();
         i += 1;
-        if flag == "--require-hash" && command == "strings" {
+        if flag == "--require-hash" && command != "verify-bindings" {
             if options.insert(flag, "true").is_some() {
                 return Err(Error::Invalid("Repeated --require-hash".into()));
             }
@@ -176,7 +195,9 @@ fn string_command(command: &str, input: &str, args: &[String]) -> Result<()> {
             .get(i)
             .ok_or_else(|| Error::Invalid(format!("Missing value for {flag}")))?;
         i += 1;
-        if flag == "--bind" {
+        if flag == "--node-klass" && command == "dictionaries" {
+            nodes.push(number(value)?);
+        } else if flag == "--bind" {
             let (name, id) = value
                 .split_once('=')
                 .ok_or_else(|| Error::Invalid("Use --bind CLASS=0xKLASS".into()))?;
@@ -192,6 +213,7 @@ fn string_command(command: &str, input: &str, args: &[String]) -> Result<()> {
             ]
             .contains(&flag)
                 || (command == "strings" && flag == "--min-len")
+                || (command != "verify-bindings" && flag == "--regex-pack")
                 || (command == "verify-bindings" && ["--samples", "--seed"].contains(&flag));
             if !valid || options.insert(flag, value.as_str()).is_some() {
                 return Err(Error::Invalid(format!(
@@ -215,6 +237,15 @@ fn string_command(command: &str, input: &str, args: &[String]) -> Result<()> {
     )?;
     // Parse/validate everything before creating any output.
     let min_len = num("--min-len", 1)?;
+    if command == "dictionaries" && nodes.is_empty() {
+        return Err(Error::Invalid(
+            "dictionaries needs --node-klass (repeat for each family)".into(),
+        ));
+    }
+    let pack = options
+        .get("--regex-pack")
+        .map(|p| zgcmaster::patterns::Pack::load(Path::new(p)))
+        .transpose()?;
     let samples = num("--samples", 1000)?;
     let seed = num("--seed", 0)?;
     if !(1..=10000).contains(&samples) {
@@ -239,12 +270,25 @@ fn string_command(command: &str, input: &str, args: &[String]) -> Result<()> {
     } else {
         &mut stdout
     };
-    if command == "strings" {
-        let report = zgcmaster::raw_strings::strings(
+    if command == "dictionaries" {
+        let report = zgcmaster::dictionaries::dictionaries(
+            Path::new(input),
+            &binding,
+            &nodes,
+            options.contains_key("--require-hash"),
+            pack.as_ref(),
+            out,
+        )?;
+        if file.is_some() {
+            print(&report)?;
+        }
+    } else if command == "strings" {
+        let report = zgcmaster::raw_strings::strings_with_pack(
             Path::new(input),
             &binding,
             min_len,
             options.contains_key("--require-hash"),
+            pack.as_ref(),
             out,
         )?;
         if file.is_some() {
@@ -264,6 +308,114 @@ fn string_command(command: &str, input: &str, args: &[String]) -> Result<()> {
     }
     Ok(())
 }
+fn corpus_command(command: &str, inputs: &[&str], args: &[String]) -> Result<()> {
+    let mut opts = std::collections::BTreeMap::new();
+    let mut i = 0;
+    while i < args.len() {
+        let flag = args[i].as_str();
+        i += 1;
+        if command == "diff-captures" && flag == "--require-hash" {
+            if opts.insert(flag, "true").is_some() {
+                return Err(Error::Invalid("Repeated --require-hash".into()));
+            }
+            continue;
+        }
+        let value = args
+            .get(i)
+            .ok_or_else(|| Error::Invalid(format!("Missing value for {flag}")))?;
+        i += 1;
+        let valid = ["--output", "--max-bytes", "--region-bytes"].contains(&flag)
+            || (command == "diff-captures"
+                && [
+                    "--reference-hypothesis",
+                    "--min-len",
+                    "--max-unique",
+                    "--max-text-bytes",
+                    "--regex-pack",
+                ]
+                .contains(&flag));
+        if !valid || opts.insert(flag, value).is_some() {
+            return Err(Error::Invalid(format!(
+                "Unknown or repeated option: {flag}"
+            )));
+        }
+    }
+    let num = |flag, default| opts.get(flag).map_or(Ok(default), |s| number(s));
+    let census = zgcmaster::census::Options {
+        max_bytes: num("--max-bytes", 1048576)?,
+        region_bytes: num("--region-bytes", 67108864)?,
+    };
+    census.validate()?;
+    let diff = if command == "diff-captures" {
+        let hypothesis = opts
+            .get("--reference-hypothesis")
+            .ok_or_else(|| Error::Invalid("diff-captures needs --reference-hypothesis".into()))?;
+        let n = num("--max-unique", 250000)?;
+        if n > 2000000 {
+            return Err(Error::Invalid("--max-unique exceeds 2000000".into()));
+        }
+        let options = zgcmaster::corpus::Options {
+            census,
+            reference_hypothesis: (*hypothesis).into(),
+            min_len: num("--min-len", 1)?,
+            require_hash: opts.contains_key("--require-hash"),
+            max_unique: n as usize,
+            max_text_bytes: num("--max-text-bytes", 67108864)?,
+        };
+        options.validate()?;
+        Some(options)
+    } else {
+        None
+    };
+    let pack = opts
+        .get("--regex-pack")
+        .map(|p| zgcmaster::patterns::Pack::load(Path::new(p)))
+        .transpose()?;
+    let mut file = opts
+        .get("--output")
+        .map(|p| {
+            let mut open = std::fs::OpenOptions::new();
+            open.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                open.mode(0o600);
+            }
+            open.open(p).map(io::BufWriter::new)
+        })
+        .transpose()?;
+    let mut stdout = io::BufWriter::new(io::stdout().lock());
+    let out: &mut dyn Write = if let Some(file) = &mut file {
+        file
+    } else {
+        &mut stdout
+    };
+    let report = if let Some(options) = diff {
+        zgcmaster::corpus::diff_captures(
+            Path::new(inputs[0]),
+            Path::new(inputs[1]),
+            Path::new(inputs[2]),
+            Path::new(inputs[3]),
+            &options,
+            pack.as_ref(),
+            out,
+        )?
+    } else {
+        let value = zgcmaster::census::census(
+            Path::new(inputs[0]),
+            load_index(Path::new(inputs[1]))?,
+            census,
+        )?;
+        serde_json::to_writer_pretty(&mut *out, &value)?;
+        writeln!(out)?;
+        out.flush()?;
+        value
+    };
+    if file.is_some() {
+        print(&report)?;
+    }
+    Ok(())
+}
 fn run(args: &[String]) -> Result<()> {
     match args {
         [] => {
@@ -277,8 +429,16 @@ fn run(args: &[String]) -> Result<()> {
         [cmd, input, output, options @ ..] if cmd == "scan" || cmd == "scan-raw" => {
             scan_command(cmd, input, output, options)
         }
-        [cmd, input, options @ ..] if cmd == "strings" || cmd == "verify-bindings" => {
+        [cmd, input, options @ ..]
+            if cmd == "strings" || cmd == "verify-bindings" || cmd == "dictionaries" =>
+        {
             string_command(cmd, input, options)
+        }
+        [cmd, source, index, options @ ..] if cmd == "census" => {
+            corpus_command(cmd, &[source, index], options)
+        }
+        [cmd, a, ia, b, ib, options @ ..] if cmd == "diff-captures" => {
+            corpus_command(cmd, &[a, ia, b, ib], options)
         }
         [cmd] if cmd == "profiles" => print(&zgcmaster::profiles::SUPPORTED),
         [cmd, profile] if cmd == "boot-profile" => {

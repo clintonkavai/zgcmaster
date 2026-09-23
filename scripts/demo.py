@@ -27,7 +27,25 @@ def command(*args):
 
 
 def cli(*args):
-    return command("docker", "compose", "run", "--rm", "-T", "cli", *map(str, args))
+    # Preserve owner-only output permissions without making files root-owned on Linux.
+    identity = ["--user", f"{os.getuid()}:{os.getgid()}"] if hasattr(os, "getuid") else []
+    return command("docker", "compose", "run", "--rm", "-T", *identity, "cli", *map(str, args))
+
+
+def build_images():
+    # Only retry the idempotent image build, and only recognized transport errors.
+    # Do not retry capture or output-producing commands after partial success.
+    transient = ("502 Bad Gateway", "503 Service Unavailable", "429 Too Many Requests",
+                 "TLS handshake timeout", "connection reset by peer")
+    for attempt in range(3):
+        try:
+            command("docker", "compose", "build", "fixture", "cli")
+            return
+        except RuntimeError as error:
+            if attempt == 2 or not any(message in str(error) for message in transient):
+                raise
+            print(f"Transient image transport failure; retry {attempt + 1}/2", flush=True)
+            time.sleep(5 * (attempt + 1))
 
 
 def request(base, path, method="GET"):
@@ -51,7 +69,7 @@ def main():
     (ROOT / "artifacts").mkdir(exist_ok=True)
     if not args.no_build:
         print("Building pinned fixture and CLI containers…", flush=True)
-        command("docker", "compose", "build", "fixture", "cli")
+        build_images()
     command("docker", "compose", "up", "-d", "--no-build", "fixture")
     base = "http://127.0.0.1:" + os.environ.get("ZGCM_PORT", "18765")
     status = None

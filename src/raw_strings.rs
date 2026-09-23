@@ -50,7 +50,7 @@ impl Bindings {
             max_bytes,
         })
     }
-    fn kw(&self) -> usize {
+    pub(crate) fn kw(&self) -> usize {
         if self.narrow { 4 } else { 8 }
     }
     pub(crate) fn metadata(&self) -> Value {
@@ -151,12 +151,12 @@ impl Pair {
     fn units(&self) -> usize {
         self.payload.len() / (1 + self.coder as usize)
     }
-    fn evidence(&self) -> Value {
+    pub(crate) fn evidence(&self) -> Value {
         json!({"string_offset":self.offset,"array_offset":self.target,"reference_raw":format!("0x{:x}",self.raw),
             "array_bytes":self.payload.len(),"utf16_units":self.units(),"coder":self.coder,
             "cached_hash":self.cached,"computed_hash":self.computed,"hash_status":self.status})
     }
-    fn text(&self) -> (String, bool) {
+    pub(crate) fn text(&self) -> (String, bool) {
         if self.coder == 0 {
             return (self.payload.iter().map(|&b| b as char).collect(), false);
         }
@@ -194,12 +194,28 @@ fn walk(
     bindings: &Bindings,
     mut visit: impl FnMut(u64, &[u8], u64) -> Result<()>,
 ) -> Result<(u64, String, u64)> {
+    walk_klass(
+        path,
+        bindings.kw(),
+        &[bindings.string_klass],
+        32,
+        &mut visit,
+    )
+}
+
+pub(crate) fn walk_klass(
+    path: &Path,
+    kw: usize,
+    klasses: &[u64],
+    header_bytes: usize,
+    mut visit: impl FnMut(u64, &[u8], u64) -> Result<()>,
+) -> Result<(u64, String, u64)> {
     let mut file = File::open(path)?;
     let size = file.metadata()?.len();
     if !file.metadata()?.is_file() || !(32..=MAX_FILE).contains(&size) {
         return Err(invalid("Expected a regular raw file of 32 bytes..64 GiB"));
     }
-    let mut buffer = vec![0; CHUNK + 32];
+    let mut buffer = vec![0; CHUNK + header_bytes];
     let mut hash = Sha256::new();
     let mut base = 0;
     let mut count = 0;
@@ -217,11 +233,11 @@ fn walk(
         let main = n.min(CHUNK);
         hash.update(&buffer[..main]);
         for pos in (0..main).step_by(8) {
-            if pos + 32 > n {
+            if pos + header_bytes > n {
                 break;
             }
-            let header = &buffer[pos..pos + 32];
-            if word(&header[8..8 + bindings.kw()]) == bindings.string_klass && mark_ok(header) {
+            let header = &buffer[pos..pos + header_bytes];
+            if klasses.contains(&word(&header[8..8 + kw])) && mark_ok(header) {
                 count += 1;
                 visit(base + pos as u64, header, size)?;
             }
@@ -230,7 +246,7 @@ fn walk(
     }
     Ok((size, format!("{:x}", hash.finalize()), count))
 }
-fn recheck(path: &Path, size: u64, hash: &str) -> Result<()> {
+pub(crate) fn recheck(path: &Path, size: u64, hash: &str) -> Result<()> {
     if std::fs::metadata(path)?.len() != size {
         return Err(invalid("Capture size changed"));
     }
@@ -240,7 +256,7 @@ fn recheck(path: &Path, size: u64, hash: &str) -> Result<()> {
         "capture changed during String reads",
     )
 }
-fn json_line(out: &mut dyn Write, value: &Value) -> Result<()> {
+pub(crate) fn json_line(out: &mut dyn Write, value: &Value) -> Result<()> {
     serde_json::to_writer(&mut *out, value)?;
     writeln!(out)?;
     Ok(())
@@ -257,12 +273,23 @@ pub fn strings(
     require_hash: bool,
     out: &mut dyn Write,
 ) -> Result<Value> {
+    strings_with_pack(path, bindings, min_len, require_hash, None, out)
+}
+
+pub fn strings_with_pack(
+    path: &Path,
+    bindings: &Bindings,
+    min_len: u64,
+    require_hash: bool,
+    pack: Option<&patterns::Pack>,
+    out: &mut dyn Write,
+) -> Result<Value> {
     let mut file = File::open(path)?;
     let mut counts = BTreeMap::new();
     let mut emitted = 0u64;
     json_line(
         out,
-        &json!({"record":"metadata","assumptions":bindings.metadata(),"min_utf16_units":min_len,
+        &json!({"record":"metadata","assumptions":bindings.metadata(),"min_utf16_units":min_len,"regex_pack":pack.map(patterns::Pack::metadata),
         "require_hash":require_hash,"warning":"May contain secrets. Candidates are not proven live objects; require the completion footer."}),
     )?;
     let (size, hash, count) = walk(path, bindings, |offset, header, size| {
@@ -279,6 +306,9 @@ pub fn strings(
                 } else {
                     let (text, lossy) = pair.text();
                     let mut row = pair.evidence();
+                    if let Some(pack) = pack {
+                        row["regex_matches"] = json!(pack.matches(&text));
+                    }
                     row["record"] = json!("string");
                     row["text"] = json!(text);
                     row["text_lossy"] = json!(lossy);
@@ -291,7 +321,8 @@ pub fn strings(
     })?;
     recheck(path, size, &hash)?;
     let report = json!({"record":"complete","heap_sha256":hash,"heap_bytes":size,"header_candidates":count,
-        "emitted":emitted,"counts":counts,"assumptions":bindings.metadata(),"min_utf16_units":min_len,"require_hash":require_hash});
+        "emitted":emitted,"counts":counts,"assumptions":bindings.metadata(),"min_utf16_units":min_len,"require_hash":require_hash,
+        "regex_pack":pack.map(patterns::Pack::metadata)});
     json_line(out, &report)?;
     out.flush()?;
     Ok(report)

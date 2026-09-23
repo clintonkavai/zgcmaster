@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "patterns": [
+    {"name": "fatal", "regex": "(?i)\\bfatal\\b"},
+    {"name": "jetty-started", "regex": "(?i)jetty started"},
+    {"name": "synthetic-marker", "regex": "\\{DEMO\\}"}
+  ]
+}

@@ -98,7 +98,7 @@ impl Reader {
     }
 }
 
-fn sniff(p: &[u8]) -> Option<&'static str> {
+pub(crate) fn sniff(p: &[u8]) -> Option<&'static str> {
     if p.len() >= 10 && p.starts_with(&[0x1f, 0x8b, 8]) && p[3] & 0xe0 == 0 {
         Some("gz")
     } else if p.len() >= 4 && p.starts_with(&[0xff, 0xd8, 0xff]) && (0xc0..=0xfe).contains(&p[3]) {

@@ -46,6 +46,7 @@ public class Fixture {
     private final List<Sample> samples = new ArrayList<>();
     private final TraceEvent[] traces = new TraceEvent[32];
     private final Map<String, Sample> byName = new HashMap<>();
+    private final Map<String, String> dictionary = new HashMap<>();
     private byte[] compressed;
     private boolean lastInstanaTrace;
     private List<Object> examples;
@@ -77,6 +78,7 @@ public class Fixture {
                     "measurements", s.measurements, "times", s.times));
         }
         for (int i = 0; i < count; i++) samples.get(i).next = samples.get((i + 1) % count);
+        for (int i = 0; i < 16; i++) dictionary.put("fixture-key-" + i, "fixture-value-" + i + "-\u03a9");
         var bytes = new ByteArrayOutputStream();
         try (var gzip = new GZIPOutputStream(bytes)) {
             gzip.write("zgcmaster: a binary payload recovered from a Java byte array\n".repeat(32).getBytes(StandardCharsets.UTF_8));
@@ -87,7 +89,8 @@ public class Fixture {
         Path out = Path.of("/tmp/fixture");
         Files.createDirectories(out);
         json.writerWithDefaultPrettyPrinter().writeValue(out.resolve("expected.json").toFile(),
-                Map.of("samples", expected, "gzip_sha256", digest(compressed), "sample_count", count));
+                Map.of("samples", expected, "gzip_sha256", digest(compressed), "sample_count", count,
+                        "dictionary", dictionary));
         examples = new ArrayList<Object>(List.of(this, samples.getFirst(), samples.getFirst().label,
                 new byte[0], new int[0], new long[0], new double[0], new char[0], new boolean[0],
                 new short[0], new float[0], new Object[0], traces, traces[0], samples, byName,
@@ -107,6 +110,7 @@ public class Fixture {
             for (long n : sample.times) checksum += n;
         }
         for (TraceEvent trace : traces) checksum += trace.traceId.hashCode() + trace.source.hashCode();
+        for (var entry : dictionary.entrySet()) checksum += entry.getKey().hashCode() + entry.getValue().hashCode();
         for (byte b : compressed) checksum += b;
         touched = checksum;
         json.writerWithDefaultPrettyPrinter().writeValue(Path.of("/tmp/fixture/layout.json").toFile(), Layout.describe(examples));

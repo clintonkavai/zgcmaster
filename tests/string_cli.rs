@@ -165,3 +165,108 @@ fn cli_verify_reports_samples_without_text_and_rejects_inapplicable_flags() {
             .contains("Missing --reference-hypothesis")
     );
 }
+
+#[test]
+fn census_diff_and_dictionary_cli_create_private_outputs_and_validate_options() {
+    let fixture = Fixture::new();
+    let heap = fixture.dir.join("heap.raw");
+    let index = fixture.dir.join("index.json");
+    let run = Command::new(env!("CARGO_BIN_EXE_zgcmaster"))
+        .arg("scan-raw")
+        .arg(&heap)
+        .arg(&index)
+        .args([
+            "--identity-mapping",
+            "--boot-profile",
+            "hotspot21-zgc-nongen-compressedklass-le64",
+            "--bind",
+            "java.lang.String=0x2000",
+            "--bind",
+            "[B=0x3000",
+        ])
+        .output()
+        .unwrap();
+    assert!(run.status.success(), "{:?}", run.stderr);
+    let census = fixture.dir.join("census.json");
+    let run = Command::new(env!("CARGO_BIN_EXE_zgcmaster"))
+        .arg("census")
+        .arg(&heap)
+        .arg(&index)
+        .arg("--output")
+        .arg(&census)
+        .output()
+        .unwrap();
+    assert!(run.status.success(), "{:?}", run.stderr);
+    let report: Value = serde_json::from_slice(&fs::read(&census).unwrap()).unwrap();
+    assert_eq!(report["formats"]["text"]["count"], 1);
+    let diff = fixture.dir.join("diff.jsonl");
+    let diff_command = || {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_zgcmaster"));
+        cmd.arg("diff-captures")
+            .arg(&heap)
+            .arg(&index)
+            .arg(&heap)
+            .arg(&index)
+            .args(["--reference-hypothesis", "nongen-low42-equals-file-offset"]);
+        cmd
+    };
+    let run = diff_command().arg("--output").arg(&diff).output().unwrap();
+    assert!(run.status.success(), "{:?}", run.stderr);
+    let report: Value = serde_json::from_slice(&run.stdout).unwrap();
+    assert_eq!(report["new_strings"], 0);
+    assert_eq!(report["gone_strings"], 0);
+    assert!(
+        !diff_command()
+            .arg("--output")
+            .arg(&diff)
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    let invalid = fixture.dir.join("invalid.json");
+    assert!(
+        !diff_command()
+            .args(["--max-unique", "0", "--output"])
+            .arg(&invalid)
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    assert!(!invalid.exists());
+    let pairs = fixture.dir.join("pairs.jsonl");
+    let run = fixture
+        .command("dictionaries")
+        .args([
+            "--node-klass",
+            "0x4000",
+            "--node-klass",
+            "0x5000",
+            "--output",
+        ])
+        .arg(&pairs)
+        .output()
+        .unwrap();
+    assert!(run.status.success(), "{:?}", run.stderr);
+    let report: Value = serde_json::from_slice(&run.stdout).unwrap();
+    assert_eq!(report["emitted"], 0);
+    assert!(
+        !fixture
+            .command("dictionaries")
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for path in [census, diff, pairs] {
+            assert_eq!(
+                fs::metadata(path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+    }
+}

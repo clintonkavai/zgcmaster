@@ -25,6 +25,7 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
 cargo test --release --locked -- --include-ignored
 python3 scripts/check_public_tree.py
+python3 -m unittest discover -s scripts -p 'test_*.py'
 ```
 
 Scale tests create temporary files, including a sparse 4 GiB+ file; allow enough
